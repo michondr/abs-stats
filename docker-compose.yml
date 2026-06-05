@@ -4,10 +4,13 @@ services:
     image: abs-stats:latest
     container_name: abs-stats
     restart: unless-stopped
+    # run as the host user so the bind-mounted ./data is writable and stays
+    # owned by you (the distroless image otherwise runs as uid 65532).
+    user: "1000:1000"
+    env_file: .env
     volumes:
-      # serve the folder live from disk — edit public/index.html + reload the browser, no rebuild needed.
-      # (mounting the directory, not the single file, so file rewrites are picked up correctly)
-      - ./public:/usr/share/nginx/html:ro
+      # persistent SQLite db + downscaled covers
+      - ./data:/data
     networks:
       - proxy
     labels:
@@ -15,6 +18,7 @@ services:
       - "traefik.http.routers.abs-stats.rule=Host(`abs-stats.michondr.space`)"
       - "traefik.http.routers.abs-stats.entrypoints=websecure"
       - "traefik.http.routers.abs-stats.tls.certresolver=myvercelresolver"
+      - "traefik.http.services.abs-stats.loadbalancer.server.port=8080"
 
 networks:
   proxy:

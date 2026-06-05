@@ -1,6 +1,18 @@
-FROM nginx:1.27-alpine
+# ---- build ----
+FROM golang:1.22 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# CGO off: modernc.org/sqlite is pure Go, so this is a static binary.
+RUN CGO_ENABLED=0 go build -buildvcs=false -o /out/abs-stats .
 
-# Serve the mockup as the site root
-COPY public/ /usr/share/nginx/html/
-
-EXPOSE 80
+# ---- runtime ----
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=build /out/abs-stats /app/abs-stats
+COPY public/ /app/public/
+ENV PORT=8080 DATA_DIR=/data WEB_DIR=/app/public
+EXPOSE 8080
+VOLUME ["/data"]
+ENTRYPOINT ["/app/abs-stats"]

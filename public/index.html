@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>9 · Zoom stages (heatmap → full detail)</title>
+<title>Listening heatmap</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#2b3340;
@@ -65,12 +65,23 @@
   img.cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:3px;opacity:0;transition:opacity .25s ease;background:#0c1118}
   :is(.z3,.z4,.z5) img.cover{opacity:1}
 
+  /* cover-missing placeholder — books deleted from the ABS library keep their
+     sessions but have no cover, so we draw a titled tile in the cover's slot. */
+  .ph{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
+      padding:5px;border-radius:3px;overflow:hidden;
+      background:linear-gradient(135deg,#283449,#161b22);color:#aeb9c7;
+      font-size:9px;font-weight:600;line-height:1.18;opacity:0;transition:opacity .25s ease}
+  .ph span{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+  :is(.z3,.z4,.z5) .book.nocover .ph{display:flex;opacity:1}
+  .book.nocover img.cover{display:none}
+
   /* WIDE levels (Compact + Full detail): books sit side by side as cards — cover left, info right.
      Cover is full cell-height, but max-width lets it shrink so two books still fit when the card is narrow. */
   .wide .cell{flex-direction:row;align-items:center;gap:14px;padding:8px 14px}
   .wide .books{position:static;inset:auto;display:flex;flex:1 1 auto;gap:14px;height:100%;min-width:0}
   .wide .book{position:relative;inset:auto;display:flex;flex-direction:row;align-items:center;gap:12px;flex:1 1 0;min-width:0}
   .wide .book img.cover{position:relative;inset:auto;height:calc(100% - 8px);width:auto;aspect-ratio:5/7;max-width:46%;flex:0 0 auto;border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+  .wide .book.nocover .ph{position:relative;inset:auto;height:calc(100% - 8px);aspect-ratio:5/7;max-width:46%;flex:0 0 auto;border-radius:5px;font-size:12px;padding:10px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
   .wide .cell.multi .book:nth-child(2) img.cover{-webkit-mask-image:none;mask-image:none}
 
   /* finished checkmark (per book) */
@@ -104,7 +115,7 @@
   .compactmulti{display:none}
   .z4 .cell.multi .books{display:none}
   .z4 .cell.multi .compactmulti{display:flex;align-items:center;gap:12px;width:100%;height:100%}
-  .compactmulti .blend{position:relative;height:calc(100% - 8px);aspect-ratio:3/4;flex:0 0 auto;border-radius:5px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+  .compactmulti .blend{position:relative;height:calc(100% - 8px);aspect-ratio:3/4;flex:0 0 auto;border-radius:5px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.5);background:linear-gradient(135deg,#283449,#161b22)}
   .compactmulti .blend img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .compactmulti .blend img.bimg2{-webkit-mask-image:linear-gradient(135deg,transparent 43%,#000 57%);mask-image:linear-gradient(135deg,transparent 43%,#000 57%)}
   .compactmulti .titles{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}
@@ -112,6 +123,17 @@
   .compactmulti .tt{font-weight:700;font-size:12px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .compactmulti .pp{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap}
   .compactmulti .pp .ar{color:#a9b4ff}
+
+  /* ===== first-load / sync loader ===== */
+  .loader{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .4s ease}
+  .loader.hidden{opacity:0;pointer-events:none}
+  .lbox{display:flex;flex-direction:column;align-items:center;gap:14px;max-width:540px;padding:24px;text-align:center}
+  .spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);animation:spin 1s linear infinite}
+  .loader.err .spinner{display:none}
+  .lmsg{font-size:15px;font-weight:600;color:var(--text)}
+  .lsub{font-size:12px;color:var(--muted);word-break:break-word}
+  .loader.err .lmsg{color:#f85149}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -122,7 +144,7 @@
     <button class="zbtn" id="zin">+</button>
   </div>
   <span>Scroll or <b>▲ / ▼</b> to zoom through the stages · cursor day stays put · <b>◄ / ►</b> or <b>Shift + scroll</b> to pan</span>
-  <span class="hint">2023 – 2026</span>
+  <span class="hint" id="hint"></span>
 </div>
 
 <div class="board">
@@ -138,29 +160,33 @@
   </div>
 </div>
 
+<div class="loader" id="loader">
+  <div class="lbox">
+    <div class="spinner"></div>
+    <div class="lmsg" id="lmsg">Loading…</div>
+    <div class="lsub" id="lsub"></div>
+  </div>
+</div>
+
 <script>
 const MONTH=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const BOOKS=[
-  {t:'Project Hail Mary', a:'Andy Weir',           img:'https://i.redd.it/97k5rhie8ala1.png'},
-  {t:'Dune',              a:'Frank Herbert',        img:'https://m.media-amazon.com/images/I/41rrXYM-wHL._SL200_.jpg'},
-  {t:'Sapiens',           a:'Yuval Noah Harari',    img:'https://m.media-amazon.com/images/I/41HWFhtig3L._SL200_.jpg'},
-  {t:'Mistborn: The Final Empire', a:'Brandon Sanderson', img:'https://m.media-amazon.com/images/I/514AZpCQ4ML._SL200_.jpg'},
-  {t:'Atomic Habits',     a:'James Clear',          img:'https://m.media-amazon.com/images/I/513Y5o-DYtL._SL200_.jpg'},
-];
 const GAP=3;
 let cw=15, ch=15;
 
-const today=new Date(2026,5,13);
-const mondayOfToday=new Date(today); mondayOfToday.setDate(today.getDate()-((today.getDay()+6)%7));
-const WEEKS=156;
-const start=new Date(mondayOfToday); start.setDate(mondayOfToday.getDate()-(WEEKS-1)*7);
-
 const grid=document.getElementById('grid');
 const monthsbar=document.getElementById('months');
+const hintEl=document.getElementById('hint');
+
+// ----- data-driven layout state (filled by build()) -----
+let WEEKS=0;            // number of week-columns from start through today's week
+let start=null;         // Monday on/before the earliest session (Date)
 const monthEls=[];
 
 function hms(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;let o='';if(h)o+=h+'h ';return o+String(m).padStart(2,'0')+'m '+String(s).padStart(2,'0')+'s';}
 function md(d){return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});}
+function parseDate(s){const p=String(s||'').split('-').map(Number);return new Date(p[0],(p[1]||1)-1,p[2]||1);}
+function keyOf(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 // ----- month-block column layout (used only in Compact + Detail) -----
 // Each month is its own block of week-columns (with leading/trailing blanks for partial weeks),
@@ -168,7 +194,10 @@ function md(d){return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}
 const blockTracks=[];   // per track: 'cell' | 'gapthin'
 const monthBase={};     // 'Y-M' -> index of that month's first cell track
 const months=[];        // in order: {base: first cell track, weeks: # of week-columns}
-{
+const cellTracks=[];    // indices into blockTracks that are real day-columns
+function computeMonthBlocks(){
+  blockTracks.length=0; cellTracks.length=0; months.length=0;
+  for(const k in monthBase) delete monthBase[k];
   const lastDate=new Date(start); lastDate.setDate(start.getDate()+WEEKS*7-1);
   let m=new Date(start.getFullYear(), start.getMonth(), 1);
   const endM=new Date(lastDate.getFullYear(), lastDate.getMonth(), 1);
@@ -184,10 +213,8 @@ const months=[];        // in order: {base: first cell track, weeks: # of week-c
     first=false;
     m=new Date(m.getFullYear(), m.getMonth()+1, 1);
   }
+  for(let i=0;i<blockTracks.length;i++) if(blockTracks[i]==='cell') cellTracks.push(i);
 }
-// the actual day-columns, in order — these are the real visual columns (a month-edge can split a
-// calendar week into two columns, e.g. a 2-day Sat+Sun column when a month starts on Saturday).
-const cellTracks=[]; for(let i=0;i<blockTracks.length;i++) if(blockTracks[i]==='cell') cellTracks.push(i);
 function blockColFor(d){
   const fd=(new Date(d.getFullYear(),d.getMonth(),1).getDay()+6)%7;
   return monthBase[d.getFullYear()+'-'+d.getMonth()] + Math.floor((d.getDate()-1+fd)/7);
@@ -195,103 +222,110 @@ function blockColFor(d){
 function tracksBefore(idx){ let c=0,t=0; for(let i=0;i<idx;i++){ if(blockTracks[i]==='gapthin') t++; else c++; } return {c,t}; }
 function blockTemplate(){ return blockTracks.map(x=> x==='gapthin'?'var(--thingap)':'var(--cw)').join(' '); }
 
-let cur=new Date(start), prevMonth=-1;
-let curBook=BOOKS[2], bookStart=new Date(start), progress=8, pendingNew=false;
 const weekBlockCol=[];
 
-for(let w=0; w<WEEKS; w++){
-  const weekMonth=cur.getMonth(), weekYear=cur.getFullYear();
-  weekBlockCol[w]=blockColFor(cur);
-  if(weekMonth!==prevMonth){
-    prevMonth=weekMonth;
-    const tb=tracksBefore(monthBase[weekYear+'-'+weekMonth]);
-    const lab=document.createElement('span');
-    lab.textContent=MONTH[weekMonth]+(weekMonth===0?" '"+String(weekYear).slice(2):'');
-    lab.dataset.cont=w; lab.dataset.cb=tb.c; lab.dataset.tb=tb.t;
-    monthsbar.appendChild(lab); monthEls.push(lab);
+// ----- build the grid from real /api/data -----
+function renderDay(cell, list, books){
+  const sessions=list.map(s=>{
+    const b=books[s.id]||{};
+    return {t:b.t||'(unknown)', a:b.a||'', img:b.img||'', from:s.from, to:s.to, fin:s.fin, secs:s.secs, started:s.started};
+  });
+  const total=sessions.reduce((s,x)=>s+x.secs,0);
+  cell.classList.add(total>9000?'l4':total>5400?'l3':total>2700?'l2':'l1');
+  if(sessions.length>1) cell.classList.add('multi');
+
+  const booksEl=document.createElement('div'); booksEl.className='books';
+  for(const s of sessions){
+    const bk=document.createElement('div'); bk.className='book'+(s.fin?' fin':'');
+    if(s.img){
+      const cov=document.createElement('img');
+      cov.className='cover'; cov.src=s.img; cov.alt=s.t; cov.loading='lazy'; cov.decoding='async';
+      cov.onerror=()=>{ bk.classList.add('nocover'); cov.remove(); };   // deleted-book cover: fall back to placeholder
+      bk.appendChild(cov);
+    } else { bk.classList.add('nocover'); }
+    const ph=document.createElement('div'); ph.className='ph'; ph.innerHTML='<span>'+esc(s.t)+'</span>';
+    bk.appendChild(ph);
+    const info=document.createElement('div'); info.className='info';
+    info.innerHTML =
+      '<div class="t">'+esc(s.t)+'</div>'+
+      '<div class="a">'+esc(s.a)+'</div>'+
+      '<div class="started">Started '+md(parseDate(s.started))+'</div>'+
+      '<div class="bar"><div class="fnew" style="width:'+s.to+'%"></div><div class="fold" style="width:'+s.from+'%"></div></div>'+
+      '<div class="pct"><b>'+s.from+'%</b> <span class="ar">→</span> <b class="to">'+s.to+'%</b></div>'+
+      '<div class="dur">took <b>'+hms(s.secs)+'</b></div>';
+    bk.appendChild(info);
+    if(s.fin){ const ck=document.createElement('div'); ck.className='check'; ck.textContent='✓'; bk.appendChild(ck); }
+    booksEl.appendChild(bk);
   }
-  for(let r=0; r<7; r++){
-    const date=new Date(cur);
-    const isFuture=date>today;
-    const cell=document.createElement('div');
-    cell.className='cell';
-    cell.style.gridRow=(r+1);
-    cell.style.gridColumn=(w+1);
-    cell.dataset.colCont=(w+1);
-    cell.dataset.colBlock=(blockColFor(date)+1);
-    cell.innerHTML='<span class="num">'+date.getDate()+'</span>';
+  cell.appendChild(booksEl);
 
-    if(isFuture){ cell.classList.add('future'); }
-    else if(Math.random()<0.38){
-      const sessions=[];
-      // primary, continuous read
-      if(pendingNew){ let nb; do{ nb=BOOKS[Math.floor(Math.random()*BOOKS.length)]; }while(nb===curBook); curBook=nb; bookStart=new Date(date); progress=0; pendingNew=false; }
-      {
-        const from=progress;
-        const fin = from>45 && Math.random()<0.08;
-        const to = fin?100:Math.min(98, from + 2 + Math.floor(Math.random()*18));
-        progress = to; if(fin) pendingNew=true;
-        sessions.push({b:curBook, started:new Date(bookStart), from, to, fin,
-                       secs:(15+Math.floor(Math.random()*165))*60 + Math.floor(Math.random()*60)});
-      }
-      // ~18% of days also have a second book (a side-read)
-      if(Math.random()<0.18){
-        let nb; do{ nb=BOOKS[Math.floor(Math.random()*BOOKS.length)]; }while(nb===curBook);
-        const from=Math.floor(Math.random()*70);
-        const fin=Math.random()<0.05;
-        const to=fin?100:Math.min(98, from + 2 + Math.floor(Math.random()*16));
-        sessions.push({b:nb, started:new Date(date.getTime()-(20+Math.floor(Math.random()*60))*864e5), from, to, fin,
-                       secs:(10+Math.floor(Math.random()*110))*60 + Math.floor(Math.random()*60)});
-      }
-
-      const total=sessions.reduce((s,x)=>s+x.secs,0);
-      cell.classList.add(total>9000?'l4':total>5400?'l3':total>2700?'l2':'l1');
-      if(sessions.length>1) cell.classList.add('multi');
-
-      const books=document.createElement('div'); books.className='books';
-      for(const s of sessions){
-        const bk=document.createElement('div'); bk.className='book'+(s.fin?' fin':'');
-        const cov=document.createElement('img');
-        cov.className='cover'; cov.src=s.b.img; cov.alt=s.b.t; cov.loading='lazy'; cov.decoding='async';
-        bk.appendChild(cov);
-        const info=document.createElement('div'); info.className='info';
-        info.innerHTML =
-          '<div class="t">'+s.b.t+'</div>'+
-          '<div class="a">'+s.b.a+'</div>'+
-          '<div class="started">Started '+md(s.started)+'</div>'+
-          '<div class="bar"><div class="fnew" style="width:'+s.to+'%"></div><div class="fold" style="width:'+s.from+'%"></div></div>'+
-          '<div class="pct"><b>'+s.from+'%</b> <span class="ar">→</span> <b class="to">'+s.to+'%</b></div>'+
-          '<div class="dur">took <b>'+hms(s.secs)+'</b></div>';
-        bk.appendChild(info);
-        if(s.fin){ const ck=document.createElement('div'); ck.className='check'; ck.textContent='✓'; bk.appendChild(ck); }
-        books.appendChild(bk);
-      }
-      cell.appendChild(books);
-
-      // compact view of a multi-book day: blended cover + stacked titles
-      if(sessions.length>1){
-        const cm=document.createElement('div'); cm.className='compactmulti';
-        const blend=document.createElement('div'); blend.className='blend';
-        sessions.slice(0,2).forEach((s,i)=>{
-          const im=document.createElement('img'); im.className='bimg'+(i===1?' bimg2':'');
-          im.src=s.b.img; im.alt=s.b.t; im.loading='lazy'; im.decoding='async';
-          blend.appendChild(im);
-        });
-        cm.appendChild(blend);
-        const titles=document.createElement('div'); titles.className='titles';
-        for(const s of sessions){
-          const row=document.createElement('div'); row.className='trow';
-          row.innerHTML='<div class="tt">'+s.b.t+(s.fin?' <span style="color:var(--green)">✓</span>':'')+'</div>'+
-                        '<div class="pp"><b style="color:var(--text)">'+s.from+'%</b> <span class="ar">→</span> <b style="color:var(--text)">'+s.to+'%</b></div>';
-          titles.appendChild(row);
-        }
-        cm.appendChild(titles);
-        cell.appendChild(cm);
-      }
-      cell.title=sessions.map(s=>s.b.t+' '+s.from+'→'+s.to+'%'+(s.fin?' ✓':'')).join('   ·   ');
+  // compact view of a multi-book day: blended cover + stacked titles
+  if(sessions.length>1){
+    const cm=document.createElement('div'); cm.className='compactmulti';
+    const blend=document.createElement('div'); blend.className='blend';
+    sessions.slice(0,2).forEach((s,i)=>{
+      if(!s.img) return;
+      const im=document.createElement('img'); im.className='bimg'+(i===1?' bimg2':'');
+      im.src=s.img; im.alt=s.t; im.loading='lazy'; im.decoding='async';
+      im.onerror=()=>im.remove();
+      blend.appendChild(im);
+    });
+    cm.appendChild(blend);
+    const titles=document.createElement('div'); titles.className='titles';
+    for(const s of sessions){
+      const row=document.createElement('div'); row.className='trow';
+      row.innerHTML='<div class="tt">'+esc(s.t)+(s.fin?' <span style="color:var(--green)">✓</span>':'')+'</div>'+
+                    '<div class="pp"><b style="color:var(--text)">'+s.from+'%</b> <span class="ar">→</span> <b style="color:var(--text)">'+s.to+'%</b></div>';
+      titles.appendChild(row);
     }
-    grid.appendChild(cell);
-    cur.setDate(cur.getDate()+1);
+    cm.appendChild(titles);
+    cell.appendChild(cm);
+  }
+  cell.title=sessions.map(s=>s.t+' '+s.from+'→'+s.to+'%'+(s.fin?' ✓':'')).join('   ·   ');
+}
+
+function build(data){
+  const books=data.books||{}, days=data.days||{};
+  start=parseDate(data.start);
+  const today=parseDate(data.today);
+  const lastMon=new Date(today); lastMon.setDate(today.getDate()-((today.getDay()+6)%7));
+  WEEKS=Math.max(1, Math.round((lastMon-start)/(7*864e5))+1);
+
+  grid.innerHTML=''; monthsbar.innerHTML=''; monthEls.length=0; weekBlockCol.length=0;
+  computeMonthBlocks();
+  hintEl.textContent=start.getFullYear()+' – '+today.getFullYear();
+
+  let cur=new Date(start), prevMonth=-1;
+  for(let w=0; w<WEEKS; w++){
+    const weekMonth=cur.getMonth(), weekYear=cur.getFullYear();
+    weekBlockCol[w]=blockColFor(cur);
+    if(weekMonth!==prevMonth){
+      prevMonth=weekMonth;
+      const tb=tracksBefore(monthBase[weekYear+'-'+weekMonth]);
+      const lab=document.createElement('span');
+      lab.textContent=MONTH[weekMonth]+(weekMonth===0?" '"+String(weekYear).slice(2):'');
+      lab.dataset.cont=w; lab.dataset.cb=tb.c; lab.dataset.tb=tb.t;
+      monthsbar.appendChild(lab); monthEls.push(lab);
+    }
+    for(let r=0; r<7; r++){
+      const date=new Date(cur);
+      const isFuture=date>today;
+      const cell=document.createElement('div');
+      cell.className='cell';
+      cell.style.gridRow=(r+1);
+      cell.style.gridColumn=(w+1);
+      cell.dataset.colCont=(w+1);
+      cell.dataset.colBlock=(blockColFor(date)+1);
+      cell.innerHTML='<span class="num">'+date.getDate()+'</span>';
+
+      if(isFuture){ cell.classList.add('future'); }
+      else {
+        const list=days[keyOf(date)];
+        if(list && list.length) renderDay(cell, list, books);
+      }
+      grid.appendChild(cell);
+      cur.setDate(cur.getDate()+1);
+    }
   }
 }
 
@@ -457,8 +491,35 @@ window.addEventListener('resize',()=>applyZoom());
 document.getElementById('zin').onclick=()=>stepLevel(1);
 document.getElementById('zout').onclick=()=>stepLevel(-1);
 
-applyZoom();
-requestAnimationFrame(()=>{ scroller.scrollLeft=scroller.scrollWidth; });
+// ===== load real data, with a sync loader =====
+const loader=document.getElementById('loader');
+const lmsg=document.getElementById('lmsg');
+const lsub=document.getElementById('lsub');
+function setLoader(msg, sub, isErr){ lmsg.textContent=msg||''; lsub.textContent=sub||''; loader.classList.toggle('err',!!isErr); }
+function hideLoader(){ loader.classList.add('hidden'); }
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function getJSON(u){ const r=await fetch(u,{cache:'no-store'}); if(!r.ok) throw new Error(u+' → HTTP '+r.status); return r.json(); }
+
+async function init(){
+  try{
+    let st=await getJSON('/api/status');
+    while(!st.ready){
+      if(st.error) setLoader('Sync error', st.error, true);
+      else setLoader(st.message||'Syncing with Audiobookshelf…', st.sessionsFetched?(st.sessionsFetched+' sessions'):'');
+      await sleep(1500);
+      st=await getJSON('/api/status');
+    }
+    setLoader('Building heatmap…','');
+    const data=await getJSON('/api/data');
+    build(data);
+    applyZoom();
+    hideLoader();
+    requestAnimationFrame(()=>{ scroller.scrollLeft=scroller.scrollWidth; });   // start at "today"
+  }catch(e){
+    setLoader('Failed to load', String(e && e.message || e), true);
+  }
+}
+init();
 </script>
 </body>
 </html>
