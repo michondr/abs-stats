@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,12 +17,13 @@ import (
 )
 
 type config struct {
-	absURL  string
-	absTok  string
-	tz      string
-	port    string
-	webDir  string
-	dataDir string
+	absURL    string
+	absPubURL string // public ABS URL for browser-facing item links (ABS_URL is internal)
+	absTok    string
+	tz        string
+	port      string
+	webDir    string
+	dataDir   string
 }
 
 func env(key, def string) string {
@@ -30,12 +35,13 @@ func env(key, def string) string {
 
 func loadConfig() config {
 	return config{
-		absURL:  os.Getenv("ABS_URL"),
-		absTok:  os.Getenv("ABS_TOKEN"),
-		tz:      env("TZ", "UTC"),
-		port:    env("PORT", "8080"),
-		webDir:  env("WEB_DIR", "public"),
-		dataDir: env("DATA_DIR", "data"),
+		absURL:    os.Getenv("ABS_URL"),
+		absPubURL: os.Getenv("ABS_PUBLIC_URL"),
+		absTok:    os.Getenv("ABS_TOKEN"),
+		tz:        env("TZ", "UTC"),
+		port:      env("PORT", "8080"),
+		webDir:    env("WEB_DIR", "public"),
+		dataDir:   env("DATA_DIR", "data"),
 	}
 }
 
@@ -62,7 +68,31 @@ func (s *status) set(f func(*status)) {
 	f(s)
 }
 
+// runHealthcheck is the `-healthcheck` mode: it hits the local /healthz and exits
+// 0/1. Invoked by the Docker HEALTHCHECK — the distroless image has no shell or
+// curl, so the binary acts as its own probe client.
+func runHealthcheck() int {
+	port := env("PORT", "8080")
+	c := &http.Client{Timeout: 8 * time.Second}
+	resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: HTTP %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return 1
+	}
+	return 0
+}
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(runHealthcheck())
+	}
+
 	cfg := loadConfig()
 	if cfg.absURL == "" || cfg.absTok == "" {
 		log.Fatal("ABS_URL and ABS_TOKEN are required")
@@ -99,6 +129,41 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Container healthcheck: app is serving (handler runs), DB connection is alive,
+	// and Audiobookshelf is reachable. Returns 200 only if all three pass, else 503.
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		h := struct {
+			Status string `json:"status"`
+			App    bool   `json:"app"`
+			DB     bool   `json:"db"`
+			ABS    bool   `json:"abs"`
+			Error  string `json:"error,omitempty"`
+		}{App: true, Status: "ok"}
+
+		var errs []string
+		if err := store.Ping(); err != nil {
+			errs = append(errs, "db: "+err.Error())
+		} else {
+			h.DB = true
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := client.Ping(ctx); err != nil {
+			errs = append(errs, "abs: "+err.Error())
+		} else {
+			h.ABS = true
+		}
+
+		code := http.StatusOK
+		if !h.DB || !h.ABS {
+			h.Status, h.Error, code = "unhealthy", strings.Join(errs, "; "), http.StatusServiceUnavailable
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(h)
+	})
+
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -112,11 +177,13 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		data := aggregate(sessions, loc)
+		data.AbsBase = strings.TrimRight(cfg.absPubURL, "/")
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		enc := json.NewEncoder(w)
 		enc.SetEscapeHTML(false)
-		enc.Encode(aggregate(sessions, loc))
+		enc.Encode(data)
 	})
 
 	mux.Handle("/covers/", http.StripPrefix("/covers/",

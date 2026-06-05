@@ -1,0 +1,274 @@
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#2b3340;
+  --text:#e6edf3; --muted:#8b949e; --accent:#7c8cff; --green:#3fb950;
+  --cw:15px; --ch:15px; --gap:3px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:hidden}
+.toolbar{display:flex;align-items:center;gap:14px;padding:10px 24px;color:var(--muted);font-size:12px;flex:0 0 auto}
+.zoom{display:inline-flex;align-items:center;gap:8px}
+.zbtn{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:16px;cursor:pointer}
+.zbtn:hover{background:var(--panel2)}
+.zlabel{font-size:12px;color:var(--text);min-width:170px;text-align:center;font-weight:600}
+.zlabel small{color:var(--muted);font-weight:400}
+.desktoponly{display:inline}
+
+.board{flex:1;display:flex;min-height:0;padding:0 24px 18px;gap:10px;position:relative}
+.daylabels{display:flex;flex-direction:column;gap:var(--gap);flex:0 0 auto;color:var(--muted);font-size:10px}
+.daylabels .sp{height:20px;flex:0 0 auto}
+.daylabels .dl{height:var(--ch);display:flex;align-items:center;justify-content:flex-end;width:30px}
+
+.scroller{flex:1;overflow:auto;min-width:0}
+.stage{position:relative;width:max-content}
+.monthsbar{height:20px;position:relative;color:var(--muted);font-size:11px;font-weight:600}
+.monthsbar span{position:absolute;top:2px;white-space:nowrap}
+
+.grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,var(--ch));grid-auto-columns:var(--cw);gap:var(--gap)}
+/* Each cell carries both its continuous-stream column (--cc) and its month-block column (--cb).
+   Switching layout mode is then a single class toggle on the grid — no per-cell JS write loop.
+   --mgap (set per zoom) shifts every cell by (its month ordinal)×--mgap, fracturing the stream into
+   months: negative = overlap (Finished level), 0 = continuous, positive = a widening gap (Covers).
+   Boundary weeks split diagonally because their top/bottom cells belong to different months. */
+.grid>.cell{grid-column:var(--cc);transform:translateX(calc(var(--mi,0) * var(--mgap,0px)))}
+.grid.blocks>.cell{grid-column:var(--cb);transform:none}   /* Compact/Detail use real gap tracks */
+
+/* ===== a day cell ===== */
+.cell{position:relative;border-radius:4px;background:#161b22;border:1px solid #20262e;display:flex;flex-direction:column;align-items:center;overflow:hidden;
+      transition:background-color .25s ease, border-color .25s ease, padding .25s ease, gap .25s ease;
+      /* skip layout/paint for the ~95% of cells that are off-screen while zooming */
+      content-visibility:auto;contain-intrinsic-size:var(--cw) var(--ch)}
+/* STAGE 1 — pure green intensity = time listened */
+.cell.l1{background:#13352a;border-color:#143a2c}
+.cell.l2{background:#1c6b3f;border-color:#1c6b3f}
+.cell.l3{background:#27a149;border-color:#27a149}
+.cell.l4{background:#3fd35b;border-color:#3fd35b}
+/* future = days that haven't happened yet (rest of the current month); dashed + faint diagonal hatch */
+.cell.future{background:#0e1218;border-style:dashed;opacity:.5;
+  background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.04) 6px 7px)}
+/* STAGE 3+ — once covers come in, all cells share one neutral background (override the l1–l4 tints) */
+.stage.z3 .cell,.stage.z4 .cell,.stage.z5 .cell{background:var(--panel2)!important;border-color:var(--border)!important}
+/* …but future cells stay ghosted at every level so "not yet" reads clearly */
+.stage.z3 .cell.future,.stage.z4 .cell.future,.stage.z5 .cell.future{background:#0e1218!important;border-color:#222a35!important;border-style:dashed;
+  background-image:repeating-linear-gradient(135deg,transparent 0 8px,rgba(255,255,255,.04) 8px 9px)}
+
+.cell:hover{outline:2px solid #fff;outline-offset:-1px;z-index:3}
+/* today — highlighted at the levels where the day number shows */
+:is(.z4,.z5) .cell.today{outline:2px solid var(--accent);outline-offset:-2px;z-index:2}
+:is(.z4,.z5) .cell.today .num{color:var(--accent)}
+
+/* day number lives bottom-right so it doesn't sit on top of the cover art */
+.num{position:absolute;bottom:3px;right:6px;font-size:11px;color:#aab6c6;opacity:0;font-weight:600;z-index:3;text-shadow:0 1px 3px rgba(0,0,0,.85);transition:opacity .25s ease}
+:is(.z4,.z5) .num{opacity:1}
+
+/* ===== the book(s) listened that day ===== */
+/* SQUARE levels: book layers stack and fill the cell; on a 2-book day the 2nd cover
+   diagonally crossfades over the 1st (covers level). */
+.books{position:absolute;inset:2px;display:block}
+.book{position:absolute;inset:0;display:block}
+.cell.multi .book:nth-child(2) img.cover{
+  -webkit-mask-image:linear-gradient(135deg,transparent 43%,#000 57%);
+          mask-image:linear-gradient(135deg,transparent 43%,#000 57%)}
+
+img.cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:3px;opacity:0;transition:opacity .25s ease;background:#0c1118}
+:is(.z3,.z4,.z5) img.cover{opacity:1}
+
+/* cover-missing placeholder — books deleted from the ABS library keep their
+   sessions but have no cover, so we draw a titled tile in the cover's slot. */
+.ph{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
+    padding:5px;border-radius:3px;overflow:hidden;
+    background:linear-gradient(135deg,#283449,#161b22);color:#aeb9c7;
+    font-size:9px;font-weight:600;line-height:1.18;opacity:0;transition:opacity .25s ease}
+.ph span{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+:is(.z3,.z4,.z5) .book.nocover .ph{display:flex;opacity:1}
+.book.nocover img.cover{display:none}
+
+/* COVERS level only: small hours-listened badge pinned bottom-left (mirrors the bottom-right day
+   number / top-right check). It's a pill that hugs the number, filled with the heatmap's green
+   intensity colour for that day — so the cover stays visible and the green is just an accent. */
+.hours{position:absolute;left:3px;bottom:3px;display:none;align-items:center;justify-content:center;
+  padding:1px 5px;border-radius:6px;font-size:11px;font-weight:800;color:#06210e;line-height:1.35;
+  z-index:3;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.55)}
+.z3 .hours{display:flex}
+.cell.l1 .hours{background:#2f8f57}
+.cell.l2 .hours{background:#1c6b3f;color:#dffbe9}
+.cell.l3 .hours{background:#27a149}
+.cell.l4 .hours{background:#3fd35b}
+
+/* WIDE levels (Compact + Full detail): books sit side by side as cards — cover left, info right.
+   The cover is a full cell-height square so it stays continuous with the square-cover level it grows
+   out of; only when two cards share one row (z5 multi-book) is it capped so both fit. */
+.wide .cell{flex-direction:row;align-items:center;gap:14px;padding:0}
+.wide .books{position:static;inset:auto;display:flex;flex:1 1 auto;gap:14px;height:100%;min-width:0}
+.wide .book{position:relative;inset:auto;display:flex;flex-direction:row;align-items:center;gap:12px;flex:1 1 0;min-width:0}
+/* cover is a full cell-height square at BOTH Compact and Detail, so it never resizes between them.
+   Sized off --ch (the cell height) rather than height:100% — a stretched flex item isn't a definite
+   height for the img's percentage to resolve against, which silently collapsed the cover to 0. */
+.wide .book img.cover{position:relative;inset:auto;height:var(--ch);width:auto;aspect-ratio:1/1;max-width:100%;flex:0 0 auto;border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:1}
+.wide .book.nocover .ph{position:relative;inset:auto;height:var(--ch);aspect-ratio:1/1;max-width:100%;flex:0 0 auto;border-radius:5px;font-size:12px;padding:10px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+.wide .cell.multi .book:nth-child(2) img.cover{-webkit-mask-image:none;mask-image:none}
+
+/* "+N" overflow chip (Detail): collapses books beyond the first 3; hover for the rest */
+.book.more{display:none}
+.wide .book.more{display:flex;flex:0 0 auto;align-self:center;align-items:center;justify-content:center;
+  min-width:44px;height:62%;padding:0 12px;border-radius:8px;background:var(--panel);
+  border:1px dashed var(--border);color:var(--muted);font-weight:800;font-size:14px;cursor:default}
+
+/* finished checkmark (per book) */
+.check{position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;background:var(--green);color:#06210e;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;opacity:0;z-index:3;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+:is(.z2,.z3,.z4,.z5) .check{opacity:1}
+/* Detail: no check badge — the green progress bar already signals completion */
+.z5 .check{display:none}
+
+/* info — right-hand column of each book card (wide only) */
+.info{display:none;text-align:left;z-index:2}
+.wide .info{display:block;flex:1 1 auto;min-width:0}
+.info .t{font-weight:700;font-size:13px;line-height:1.2;white-space:normal;overflow:hidden}
+.info .a,.info .started,.info .dur{display:none;color:#9fb0c4;font-size:11px}
+/* Full-detail card layout (unified desktop + phone): cover left, then title+author top-left,
+   started date top-right (DESKTOP only), and along the bottom the listening time pinned to the left
+   of a full-width progress bar with the % just above it (kept clear of the bottom-right day number).
+   Mobile differences only: no started date; title/author ellipsis on a single line (no wrap). */
+.z5 .info{display:flex;flex-direction:column;height:var(--ch);min-width:0;padding:8px 14px 8px 0}
+.z5 .ihead{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.z5 .imeta{flex:1 1 auto;min-width:0}
+.z5 .info .t{font-size:15px;white-space:normal;overflow:hidden}
+.z5 .info .a{display:block;font-size:12px;margin-top:1px;white-space:normal;overflow:hidden}
+.z5 .iright{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.z5 .info .started{display:block;text-align:right;font-size:11px;color:#9fb0c4;white-space:nowrap}
+.z5 .ibot{margin-top:auto;padding-right:22px}        /* keep the bar clear of the day number */
+/* time (left) and % change (right) share one row directly ON TOP of the full-width progress bar */
+.z5 .brow{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0;margin-bottom:4px}
+.z5 .info .dur{display:block;flex:0 0 auto;font-size:12px;color:#cdd9e5;white-space:nowrap;margin:0}
+.z5 .info .dur b{color:var(--text)}
+.z5 .info .pct{flex:0 0 auto;font-size:12px;text-align:right;white-space:nowrap;margin:0}
+.z5 .info .bar{height:10px;margin:0;width:100%}
+
+.bar{position:relative;height:7px;background:#0c1118;border:1px solid var(--border);border-radius:5px;overflow:hidden;margin:6px 0 4px}
+.z5 .bar{height:10px;margin:8px 0 4px}
+.fnew,.fold{transition:width .25s ease}
+.fnew{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--accent),#9aa6ff)}
+.fold{position:absolute;left:0;top:0;bottom:0;background:#39415a}
+.book.fin .fnew{background:linear-gradient(90deg,#2ea043,#3fb950)}
+.pct{font-size:11px;color:var(--muted);margin-top:2px}
+.pct b{color:var(--text)} .pct .ar{color:#a9b4ff}
+.z5 .pct{font-size:12px}
+.book.fin .pct .to{color:var(--green)}
+
+/* COMPACT (level 4): the cover is pinned to the left at the FULL cell height and never changes
+   size as you zoom — only the cell width grows. The title/progress panel sits to its right and is
+   simply revealed (the cell's overflow:hidden clips it) as the square stretches into a rectangle,
+   rather than the two sides splitting the width and both starting out thin. compactmulti is
+   positioned absolutely so it fills the whole cell regardless of the wide cell's flex padding. */
+.compactmulti{display:none}
+.z4 .cell .books{display:none}
+.z4 .cell .compactmulti{position:absolute;inset:0;display:flex;align-items:stretch}
+.compactmulti .blend{position:relative;height:100%;aspect-ratio:1/1;flex:0 0 auto;overflow:hidden;box-shadow:6px 0 16px rgba(0,0,0,.45);background:linear-gradient(135deg,#283449,#161b22)}
+.compactmulti .blend img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.compactmulti .blend img.bimg2{-webkit-mask-image:linear-gradient(135deg,transparent 43%,#000 57%);mask-image:linear-gradient(135deg,transparent 43%,#000 57%)}
+.compactmulti .titles{flex:1 1 0;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:8px;padding:0 14px}
+.compactmulti .trow{min-width:0}
+.compactmulti .tt{font-weight:700;font-size:12px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.compactmulti .pp{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap}
+.compactmulti .pp .ar{color:#a9b4ff}
+.compactmulti .trow.more .tt{color:var(--muted);font-style:italic;font-weight:600;cursor:default}
+
+/* ===== view layers + crossfade between the timeline and Level 0 ===== */
+.views{position:relative;flex:1;min-height:0}
+.board{position:absolute;inset:0;opacity:1;transform:none;transition:opacity .3s ease, transform .38s ease}
+body.monthly .board{opacity:0;transform:scale(1.06);pointer-events:none}
+
+/* ===== LEVEL 0 — year × month overview (months run DOWN, years across) ===== */
+/* Columns = years (with a per-year hours total in the header), rows = months Jan→Dec.
+   Crossfades up from the squashed heatmap (level 0.5) via the .views overlay. */
+#monthly{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0;padding:14px 24px 24px;overflow:auto;
+  opacity:0;transform:scale(.96) translateY(10px);pointer-events:none;z-index:1;
+  transition:opacity .38s ease, transform .38s cubic-bezier(.2,.7,.25,1)}
+body.monthly #monthly{opacity:1;transform:none;pointer-events:auto;z-index:2}
+.mtable{display:grid;gap:8px;align-content:stretch;flex:1;min-height:0}
+.mtable .corner{}
+.mmonth{display:flex;align-items:center;justify-content:flex-end;padding-right:14px;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap}
+.myear{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;padding-bottom:4px;text-align:center;white-space:nowrap}
+.myear .yy{font-size:20px;font-weight:800;color:var(--text);line-height:1}
+.myear .yt{font-size:12px;color:var(--muted);margin-top:3px}
+.mcell{position:relative;border-radius:10px;background:#161b22;border:1px solid #20262e;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;cursor:pointer;
+  transition:transform .12s ease, box-shadow .12s ease}
+.mcell.l1{background:#13352a;border-color:#143a2c}
+.mcell.l2{background:#1c6b3f;border-color:#1c6b3f}
+.mcell.l3{background:#27a149;border-color:#27a149}
+.mcell.l4{background:#3fd35b;border-color:#3fd35b}
+.mcell.disabled{opacity:.22;cursor:default}
+.mcell.empty{background:#0e1218;border-style:dashed;cursor:default}
+.mcell:not(.disabled):not(.empty):hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.45);z-index:2}
+.mcell .mbooks{display:flex;align-items:center;gap:5px;font-size:clamp(12px,1.7vw,20px);font-weight:800;color:#06210e}
+.mcell.l0c .mbooks,.mcell:not([class*=" l"]) .mbooks{color:var(--muted)}
+.mcell .mbooks .ic{display:inline-flex;align-items:center;justify-content:center;width:1.15em;height:1.15em;border-radius:50%;background:rgba(6,33,14,.25);font-size:.8em}
+.mcell .mhrs{font-size:clamp(10px,1.2vw,14px);font-weight:600;color:#06210e;opacity:.8}
+.mcell.l1 .mbooks,.mcell.l1 .mhrs{color:#bdf3d2}
+.mcell.dim .mbooks,.mcell.dim .mhrs{color:var(--muted)}
+.mtitle{color:var(--muted);font-size:12px;padding:2px 0 10px}
+
+/* ===== mobile usage-info band (phone, heatmap levels only) ===== */
+/* Fixed at the bottom of the board, but pointer-events:none so a touch there still scrolls the
+   heatmap underneath sideways. Shown only at the heatmap stages via body.lvl-heatmap. */
+#usageinfo{display:none}
+body.phone.lvl-heatmap #usageinfo{
+  position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;
+  padding:10px 16px calc(10px + env(safe-area-inset-bottom));pointer-events:none;z-index:6;
+  background:linear-gradient(to top,var(--bg) 60%,rgba(13,17,23,0));color:var(--muted);
+  font-size:12px;text-align:center;line-height:1.4}
+#usageinfo b{color:var(--text)}
+
+/* ===== "open in Audiobookshelf" modal (mobile tap on a day) ===== */
+.modal{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.mback{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+.mcard{position:relative;background:var(--panel);border:1px solid var(--border);border-radius:14px;
+  padding:18px;width:340px;max-width:90vw;max-height:80vh;overflow:auto;box-shadow:0 16px 48px rgba(0,0,0,.6)}
+.mttl{font-size:16px;font-weight:700}
+.msub{font-size:12px;color:var(--muted);margin:4px 0 14px}
+.mlist{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.absitem{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;
+  background:var(--panel2);border:1px solid var(--border);color:var(--text);text-decoration:none}
+.aci{width:46px;height:46px;flex:0 0 auto;border-radius:6px;object-fit:cover;background:#0c1118}
+.aciph{background:linear-gradient(135deg,#283449,#161b22)}
+.acmeta{flex:1 1 auto;min-width:0}
+.act{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aca{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.acgo{color:var(--accent);flex:0 0 auto;font-weight:700}
+.absitem:active{background:#222a36}
+.mcancel{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:14px;cursor:pointer}
+
+/* ===== first-load / sync loader ===== */
+.loader{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .4s ease}
+.loader.hidden{opacity:0;pointer-events:none}
+.lbox{display:flex;flex-direction:column;align-items:center;gap:14px;max-width:540px;padding:24px;text-align:center}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--border);border-top-color:var(--accent);animation:spin 1s linear infinite}
+.loader.err .spinner{display:none}
+.lmsg{font-size:15px;font-weight:600;color:var(--text)}
+.lsub{font-size:12px;color:var(--muted);word-break:break-word}
+.loader.err .lmsg{color:#f85149}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== PHONE (coarse pointer) ===== */
+/* Controls become swipe-driven (see controls.js); the toolbar collapses to just the level label,
+   and the day-of-week label gutter is dropped to give the heatmap the full width. */
+@media (pointer:coarse){
+  .toolbar{padding:8px 14px;gap:10px;font-size:11px}
+  .toolbar .desktoponly{display:none}
+  .zbtn{width:34px;height:34px}
+  .board{padding:0 10px 10px;gap:6px}
+  .daylabels{display:none}
+  #monthly{padding:4px 12px 16px}
+  .myear .yy{font-size:18px}
+  /* full-height covers / detail are sized in JS. Detail card is unified with desktop (.z5 .info);
+     the only phone differences: hide the started date, and keep title/author to one ellipsised line. */
+  .z5 .info .started{display:none}
+  .z5 .info .t,.z5 .info .a{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .z5 .info .t{font-size:13px}
+  /* two-book day: the cards are narrow, so stack time over % (bottom→top: bar, %, time) */
+  .z5 .cell.multi .brow{flex-direction:column;align-items:flex-start;gap:1px}
+  .z5 .cell.multi .info .pct{text-align:left}
+}

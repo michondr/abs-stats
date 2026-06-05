@@ -54,6 +54,9 @@ func openStore(dir string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// Ping verifies the database connection is alive (used by the healthcheck).
+func (s *Store) Ping() error { return s.db.Ping() }
+
 // upsertSessions inserts/updates a page of sessions in one transaction and
 // returns how many rows were new or had a changed updated_at. The caller uses
 // that count to detect when an incremental sync has reached already-synced data.

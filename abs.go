@@ -60,8 +60,9 @@ type DaySession struct {
 type Data struct {
 	GeneratedAt string                  `json:"generatedAt"`
 	TZ          string                  `json:"tz"`
-	Start       string                  `json:"start"` // Monday on/before earliest session, YYYY-MM-DD
-	Today       string                  `json:"today"` // today in TZ, YYYY-MM-DD
+	Start       string                  `json:"start"`             // Monday on/before earliest session, YYYY-MM-DD
+	Today       string                  `json:"today"`             // today in TZ, YYYY-MM-DD
+	AbsBase     string                  `json:"absBase,omitempty"` // public ABS base URL for item links
 	Books       map[string]Book         `json:"books"`
 	Days        map[string][]DaySession `json:"days"`
 }
@@ -89,6 +90,21 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	return c.http.Do(req)
+}
+
+// Ping checks that Audiobookshelf is reachable, via its unauthenticated /ping
+// endpoint (returns {"success":true}). Used by the container healthcheck.
+func (c *Client) Ping(ctx context.Context) error {
+	resp, err := c.get(ctx, "/ping")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ping: %s", resp.Status)
+	}
+	return nil
 }
 
 // fetchSessionsPage fetches a single page of listening sessions. Page 0 is the

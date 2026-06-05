@@ -15,4 +15,7 @@ COPY public/ /app/public/
 ENV PORT=8080 DATA_DIR=/data WEB_DIR=/app/public
 EXPOSE 8080
 VOLUME ["/data"]
+# Distroless has no shell/curl, so the binary probes itself (-healthcheck -> GET /healthz).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD ["/app/abs-stats", "-healthcheck"]
 ENTRYPOINT ["/app/abs-stats"]
