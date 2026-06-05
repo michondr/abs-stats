@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9 · Zoom stages (heatmap → full detail)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --border:#2b3340;
+    --text:#e6edf3; --muted:#8b949e; --accent:#7c8cff; --green:#3fb950;
+    --cw:15px; --ch:15px; --gap:3px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);display:flex;flex-direction:column;overflow:hidden}
+  .toolbar{display:flex;align-items:center;gap:14px;padding:10px 24px;color:var(--muted);font-size:12px;flex:0 0 auto}
+  .zoom{display:inline-flex;align-items:center;gap:8px}
+  .zbtn{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:16px;cursor:pointer}
+  .zbtn:hover{background:var(--panel2)}
+  .zlabel{font-size:12px;color:var(--text);min-width:170px;text-align:center;font-weight:600}
+  .zlabel small{color:var(--muted);font-weight:400}
+
+  .board{flex:1;display:flex;min-height:0;padding:0 24px 18px;gap:10px}
+  .daylabels{display:flex;flex-direction:column;gap:var(--gap);flex:0 0 auto;color:var(--muted);font-size:10px}
+  .daylabels .sp{height:20px;flex:0 0 auto}
+  .daylabels .dl{height:var(--ch);display:flex;align-items:center;justify-content:flex-end;width:30px}
+
+  .scroller{flex:1;overflow:auto;min-width:0}
+  .stage{position:relative;width:max-content}
+  .monthsbar{height:20px;position:relative;color:var(--muted);font-size:11px;font-weight:600}
+  .monthsbar span{position:absolute;top:2px;white-space:nowrap}
+
+  .grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,var(--ch));grid-auto-columns:var(--cw);gap:var(--gap)}
+
+  /* ===== a day cell ===== */
+  .cell{position:relative;border-radius:4px;background:#161b22;border:1px solid #20262e;display:flex;flex-direction:column;align-items:center;overflow:hidden;
+        transition:background-color .25s ease, border-color .25s ease, padding .25s ease, gap .25s ease;
+        /* skip layout/paint for the ~95% of cells that are off-screen while zooming */
+        content-visibility:auto;contain-intrinsic-size:var(--cw) var(--ch)}
+  /* STAGE 1 — pure green intensity = time listened */
+  .cell.l1{background:#13352a;border-color:#143a2c}
+  .cell.l2{background:#1c6b3f;border-color:#1c6b3f}
+  .cell.l3{background:#27a149;border-color:#27a149}
+  .cell.l4{background:#3fd35b;border-color:#3fd35b}
+  .cell.future{background:#0e1218;border-style:dashed;opacity:.45}
+  /* STAGE 3+ — once covers come in, all cells share one neutral background */
+  .stage:is(.z3,.z4,.z5) .cell{background:var(--panel2);border-color:var(--border)}
+
+  .cell:hover{outline:2px solid #fff;outline-offset:-1px;z-index:3}
+
+  /* day number lives bottom-right so it doesn't sit on top of the cover art */
+  .num{position:absolute;bottom:3px;right:6px;font-size:11px;color:#aab6c6;opacity:0;font-weight:600;z-index:3;text-shadow:0 1px 3px rgba(0,0,0,.85);transition:opacity .25s ease}
+  :is(.z4,.z5) .num{opacity:1}
+
+  /* ===== the book(s) listened that day ===== */
+  /* SQUARE levels: book layers stack and fill the cell; on a 2-book day the 2nd cover
+     diagonally crossfades over the 1st (covers level). */
+  .books{position:absolute;inset:2px;display:block}
+  .book{position:absolute;inset:0;display:block}
+  .cell.multi .book:nth-child(2) img.cover{
+    -webkit-mask-image:linear-gradient(135deg,transparent 43%,#000 57%);
+            mask-image:linear-gradient(135deg,transparent 43%,#000 57%)}
+
+  img.cover{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:3px;opacity:0;transition:opacity .25s ease;background:#0c1118}
+  :is(.z3,.z4,.z5) img.cover{opacity:1}
+
+  /* WIDE levels (Compact + Full detail): books sit side by side as cards — cover left, info right.
+     Cover is full cell-height, but max-width lets it shrink so two books still fit when the card is narrow. */
+  .wide .cell{flex-direction:row;align-items:center;gap:14px;padding:8px 14px}
+  .wide .books{position:static;inset:auto;display:flex;flex:1 1 auto;gap:14px;height:100%;min-width:0}
+  .wide .book{position:relative;inset:auto;display:flex;flex-direction:row;align-items:center;gap:12px;flex:1 1 0;min-width:0}
+  .wide .book img.cover{position:relative;inset:auto;height:calc(100% - 8px);width:auto;aspect-ratio:5/7;max-width:46%;flex:0 0 auto;border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+  .wide .cell.multi .book:nth-child(2) img.cover{-webkit-mask-image:none;mask-image:none}
+
+  /* finished checkmark (per book) */
+  .check{position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;background:var(--green);color:#06210e;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;opacity:0;z-index:3;box-shadow:0 1px 3px rgba(0,0,0,.6)}
+  :is(.z2,.z3,.z4,.z5) .check{opacity:1}
+
+  /* info — right-hand column of each book card (wide only) */
+  .info{display:none;text-align:left;z-index:2}
+  .wide .info{display:block;flex:1 1 auto;min-width:0}
+  .info .t{font-weight:700;font-size:13px;line-height:1.2;white-space:normal;overflow:hidden}
+  .info .a,.info .started,.info .dur{display:none;color:#9fb0c4;font-size:11px}
+  /* author / started / duration appear at the Full-detail level */
+  .z5 .info .t{font-size:15px}
+  .z5 .info .a{display:block;font-size:12px;margin-top:1px}
+  .z5 .info .started{display:block;font-size:11px;margin-top:8px}
+  .z5 .info .dur{display:block;font-size:12px;color:#cdd9e5;margin-top:6px}
+  .z5 .info .dur b{color:var(--text)}
+
+  .bar{position:relative;height:7px;background:#0c1118;border:1px solid var(--border);border-radius:5px;overflow:hidden;margin:6px 0 4px}
+  .z5 .bar{height:10px;margin:8px 0 4px}
+  .fnew,.fold{transition:width .25s ease}
+  .fnew{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--accent),#9aa6ff)}
+  .fold{position:absolute;left:0;top:0;bottom:0;background:#39415a}
+  .book.fin .fnew{background:linear-gradient(90deg,#2ea043,#3fb950)}
+  .pct{font-size:11px;color:var(--muted);margin-top:2px}
+  .pct b{color:var(--text)} .pct .ar{color:#a9b4ff}
+  .z5 .pct{font-size:12px}
+  .book.fin .pct .to{color:var(--green)}
+
+  /* COMPACT + multiple books: one diagonally-blended cover on the left, both titles stacked on the right */
+  .compactmulti{display:none}
+  .z4 .cell.multi .books{display:none}
+  .z4 .cell.multi .compactmulti{display:flex;align-items:center;gap:12px;width:100%;height:100%}
+  .compactmulti .blend{position:relative;height:calc(100% - 8px);aspect-ratio:3/4;flex:0 0 auto;border-radius:5px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+  .compactmulti .blend img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .compactmulti .blend img.bimg2{-webkit-mask-image:linear-gradient(135deg,transparent 43%,#000 57%);mask-image:linear-gradient(135deg,transparent 43%,#000 57%)}
+  .compactmulti .titles{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}
+  .compactmulti .trow{min-width:0}
+  .compactmulti .tt{font-weight:700;font-size:12px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .compactmulti .pp{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap}
+  .compactmulti .pp .ar{color:#a9b4ff}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="zoom">
+    <button class="zbtn" id="zout">–</button>
+    <span class="zlabel" id="zlabel">Level 1 · Intensity</span>
+    <button class="zbtn" id="zin">+</button>
+  </div>
+  <span>Scroll or <b>▲ / ▼</b> to zoom through the stages · cursor day stays put · <b>◄ / ►</b> or <b>Shift + scroll</b> to pan</span>
+  <span class="hint">2023 – 2026</span>
+</div>
+
+<div class="board">
+  <div class="daylabels">
+    <div class="sp"></div>
+    <div class="dl">Mon</div><div class="dl"></div><div class="dl">Wed</div><div class="dl"></div><div class="dl">Fri</div><div class="dl"></div><div class="dl">Sun</div>
+  </div>
+  <div class="scroller" id="scroller">
+    <div class="stage z1" id="stage">
+      <div class="monthsbar" id="months"></div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const MONTH=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const BOOKS=[
+  {t:'Project Hail Mary', a:'Andy Weir',           img:'https://i.redd.it/97k5rhie8ala1.png'},
+  {t:'Dune',              a:'Frank Herbert',        img:'https://m.media-amazon.com/images/I/41rrXYM-wHL._SL200_.jpg'},
+  {t:'Sapiens',           a:'Yuval Noah Harari',    img:'https://m.media-amazon.com/images/I/41HWFhtig3L._SL200_.jpg'},
+  {t:'Mistborn: The Final Empire', a:'Brandon Sanderson', img:'https://m.media-amazon.com/images/I/514AZpCQ4ML._SL200_.jpg'},
+  {t:'Atomic Habits',     a:'James Clear',          img:'https://m.media-amazon.com/images/I/513Y5o-DYtL._SL200_.jpg'},
+];
+const GAP=3;
+let cw=15, ch=15;
+
+const today=new Date(2026,5,13);
+const mondayOfToday=new Date(today); mondayOfToday.setDate(today.getDate()-((today.getDay()+6)%7));
+const WEEKS=156;
+const start=new Date(mondayOfToday); start.setDate(mondayOfToday.getDate()-(WEEKS-1)*7);
+
+const grid=document.getElementById('grid');
+const monthsbar=document.getElementById('months');
+const monthEls=[];
+
+function hms(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;let o='';if(h)o+=h+'h ';return o+String(m).padStart(2,'0')+'m '+String(s).padStart(2,'0')+'s';}
+function md(d){return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});}
+
+// ----- month-block column layout (used only in Compact + Detail) -----
+// Each month is its own block of week-columns (with leading/trailing blanks for partial weeks),
+// separated by a thin (¼ / ½ cell) gap — regardless of which weekday the month starts on.
+const blockTracks=[];   // per track: 'cell' | 'gapthin'
+const monthBase={};     // 'Y-M' -> index of that month's first cell track
+const months=[];        // in order: {base: first cell track, weeks: # of week-columns}
+{
+  const lastDate=new Date(start); lastDate.setDate(start.getDate()+WEEKS*7-1);
+  let m=new Date(start.getFullYear(), start.getMonth(), 1);
+  const endM=new Date(lastDate.getFullYear(), lastDate.getMonth(), 1);
+  let first=true;
+  while(m<=endM){
+    const firstDow=(m.getDay()+6)%7;
+    const dim=new Date(m.getFullYear(), m.getMonth()+1, 0).getDate();
+    const weeks=Math.ceil((firstDow+dim)/7);
+    if(!first) blockTracks.push('gapthin');
+    monthBase[m.getFullYear()+'-'+m.getMonth()]=blockTracks.length;
+    months.push({base:blockTracks.length, weeks});
+    for(let i=0;i<weeks;i++) blockTracks.push('cell');
+    first=false;
+    m=new Date(m.getFullYear(), m.getMonth()+1, 1);
+  }
+}
+// the actual day-columns, in order — these are the real visual columns (a month-edge can split a
+// calendar week into two columns, e.g. a 2-day Sat+Sun column when a month starts on Saturday).
+const cellTracks=[]; for(let i=0;i<blockTracks.length;i++) if(blockTracks[i]==='cell') cellTracks.push(i);
+function blockColFor(d){
+  const fd=(new Date(d.getFullYear(),d.getMonth(),1).getDay()+6)%7;
+  return monthBase[d.getFullYear()+'-'+d.getMonth()] + Math.floor((d.getDate()-1+fd)/7);
+}
+function tracksBefore(idx){ let c=0,t=0; for(let i=0;i<idx;i++){ if(blockTracks[i]==='gapthin') t++; else c++; } return {c,t}; }
+function blockTemplate(){ return blockTracks.map(x=> x==='gapthin'?'var(--thingap)':'var(--cw)').join(' '); }
+
+let cur=new Date(start), prevMonth=-1;
+let curBook=BOOKS[2], bookStart=new Date(start), progress=8, pendingNew=false;
+const weekBlockCol=[];
+
+for(let w=0; w<WEEKS; w++){
+  const weekMonth=cur.getMonth(), weekYear=cur.getFullYear();
+  weekBlockCol[w]=blockColFor(cur);
+  if(weekMonth!==prevMonth){
+    prevMonth=weekMonth;
+    const tb=tracksBefore(monthBase[weekYear+'-'+weekMonth]);
+    const lab=document.createElement('span');
+    lab.textContent=MONTH[weekMonth]+(weekMonth===0?" '"+String(weekYear).slice(2):'');
+    lab.dataset.cont=w; lab.dataset.cb=tb.c; lab.dataset.tb=tb.t;
+    monthsbar.appendChild(lab); monthEls.push(lab);
+  }
+  for(let r=0; r<7; r++){
+    const date=new Date(cur);
+    const isFuture=date>today;
+    const cell=document.createElement('div');
+    cell.className='cell';
+    cell.style.gridRow=(r+1);
+    cell.style.gridColumn=(w+1);
+    cell.dataset.colCont=(w+1);
+    cell.dataset.colBlock=(blockColFor(date)+1);
+    cell.innerHTML='<span class="num">'+date.getDate()+'</span>';
+
+    if(isFuture){ cell.classList.add('future'); }
+    else if(Math.random()<0.38){
+      const sessions=[];
+      // primary, continuous read
+      if(pendingNew){ let nb; do{ nb=BOOKS[Math.floor(Math.random()*BOOKS.length)]; }while(nb===curBook); curBook=nb; bookStart=new Date(date); progress=0; pendingNew=false; }
+      {
+        const from=progress;
+        const fin = from>45 && Math.random()<0.08;
+        const to = fin?100:Math.min(98, from + 2 + Math.floor(Math.random()*18));
+        progress = to; if(fin) pendingNew=true;
+        sessions.push({b:curBook, started:new Date(bookStart), from, to, fin,
+                       secs:(15+Math.floor(Math.random()*165))*60 + Math.floor(Math.random()*60)});
+      }
+      // ~18% of days also have a second book (a side-read)
+      if(Math.random()<0.18){
+        let nb; do{ nb=BOOKS[Math.floor(Math.random()*BOOKS.length)]; }while(nb===curBook);
+        const from=Math.floor(Math.random()*70);
+        const fin=Math.random()<0.05;
+        const to=fin?100:Math.min(98, from + 2 + Math.floor(Math.random()*16));
+        sessions.push({b:nb, started:new Date(date.getTime()-(20+Math.floor(Math.random()*60))*864e5), from, to, fin,
+                       secs:(10+Math.floor(Math.random()*110))*60 + Math.floor(Math.random()*60)});
+      }
+
+      const total=sessions.reduce((s,x)=>s+x.secs,0);
+      cell.classList.add(total>9000?'l4':total>5400?'l3':total>2700?'l2':'l1');
+      if(sessions.length>1) cell.classList.add('multi');
+
+      const books=document.createElement('div'); books.className='books';
+      for(const s of sessions){
+        const bk=document.createElement('div'); bk.className='book'+(s.fin?' fin':'');
+        const cov=document.createElement('img');
+        cov.className='cover'; cov.src=s.b.img; cov.alt=s.b.t; cov.loading='lazy'; cov.decoding='async';
+        bk.appendChild(cov);
+        const info=document.createElement('div'); info.className='info';
+        info.innerHTML =
+          '<div class="t">'+s.b.t+'</div>'+
+          '<div class="a">'+s.b.a+'</div>'+
+          '<div class="started">Started '+md(s.started)+'</div>'+
+          '<div class="bar"><div class="fnew" style="width:'+s.to+'%"></div><div class="fold" style="width:'+s.from+'%"></div></div>'+
+          '<div class="pct"><b>'+s.from+'%</b> <span class="ar">→</span> <b class="to">'+s.to+'%</b></div>'+
+          '<div class="dur">took <b>'+hms(s.secs)+'</b></div>';
+        bk.appendChild(info);
+        if(s.fin){ const ck=document.createElement('div'); ck.className='check'; ck.textContent='✓'; bk.appendChild(ck); }
+        books.appendChild(bk);
+      }
+      cell.appendChild(books);
+
+      // compact view of a multi-book day: blended cover + stacked titles
+      if(sessions.length>1){
+        const cm=document.createElement('div'); cm.className='compactmulti';
+        const blend=document.createElement('div'); blend.className='blend';
+        sessions.slice(0,2).forEach((s,i)=>{
+          const im=document.createElement('img'); im.className='bimg'+(i===1?' bimg2':'');
+          im.src=s.b.img; im.alt=s.b.t; im.loading='lazy'; im.decoding='async';
+          blend.appendChild(im);
+        });
+        cm.appendChild(blend);
+        const titles=document.createElement('div'); titles.className='titles';
+        for(const s of sessions){
+          const row=document.createElement('div'); row.className='trow';
+          row.innerHTML='<div class="tt">'+s.b.t+(s.fin?' <span style="color:var(--green)">✓</span>':'')+'</div>'+
+                        '<div class="pp"><b style="color:var(--text)">'+s.from+'%</b> <span class="ar">→</span> <b style="color:var(--text)">'+s.to+'%</b></div>';
+          titles.appendChild(row);
+        }
+        cm.appendChild(titles);
+        cell.appendChild(cm);
+      }
+      cell.title=sessions.map(s=>s.b.t+' '+s.from+'→'+s.to+'%'+(s.fin?' ✓':'')).join('   ·   ');
+    }
+    grid.appendChild(cell);
+    cur.setDate(cur.getDate()+1);
+  }
+}
+
+// ===== zoom =====
+const scroller=document.getElementById('scroller');
+const stage=document.getElementById('stage');
+const zlabel=document.getElementById('zlabel');
+// Zoom levels are numbered from 0. Level 1 is what loads initially.
+// Levels 0-2 are the green heatmap; 3 (Covers) is the square cover mosaic; 4 (Compact) and
+// 5 (Full detail) are the wide horizontal card — they begin once the box turns into a wide rectangle.
+const STAGE_META=[
+  {cls:'z0',name:'Overview'},
+  {cls:'z1',name:'Intensity'},
+  {cls:'z2',name:'+ Finished'},
+  {cls:'z3',name:'Covers'},
+  {cls:'z4',name:'Compact'},
+  {cls:'z5',name:'Full detail'},
+];
+function metrics(){
+  const sw=scroller.clientWidth;
+  // cw at which exactly `c` week-columns span the viewport
+  const cwForCols=c=>Math.max(40, Math.floor(sw/c) - GAP);
+  const maxCh=Math.max(40, Math.floor((scroller.clientHeight - 20 /*monthsbar*/ - 6*GAP - 4) / 7));
+  return {
+    maxCh,                                        // height cap so all 7 weekday rows fit; past it the cell goes wide
+    maxCw: Math.max(200, Math.floor((sw-GAP)/2)), // max zoom = two week-columns (≈900px/cell on FullHD)
+    cwCompact: Math.max(maxCh+1, cwForCols(6.5)), // Compact cell width (wide enough for a 2-book day's titles + progress)
+    cw45: cwForCols(4.5),                         // boundary between Compact and Full detail
+  };
+}
+function stageNum(v, m){
+  if(v<12) return 0;
+  if(v<22) return 1;
+  if(v<33) return 2;
+  if(v<=m.maxCh) return 3;          // square covers
+  if(v < m.cw45) return 4;          // wide compact card (~two months)
+  return 5;                          // wide full-detail card (~two weeks)
+}
+function levelTargetCw(n, m){        // where arrows/buttons snap for each level
+  switch(n){
+    case 0: return 10;
+    case 1: return 16;
+    case 2: return 28;
+    case 3: return Math.max(40, Math.round(m.maxCh*0.7));
+    case 4: return m.cwCompact;
+    default: return m.maxCw;
+  }
+}
+// layout mode: false = continuous stream (levels 0-3), true = month blocks (levels 4-5)
+let blocksMode=false, thinFactor=0.5;
+function blockXFor(cellsBefore, thinBefore, cwv, thinv){ return cellsBefore*(cwv+GAP) + thinBefore*(thinv*cwv+GAP); }
+function weekBlockX(w, cwv, thinv){ const tb=tracksBefore(weekBlockCol[w]); return blockXFor(tb.c, tb.t, cwv, thinv); }
+function nearestWeekToX(x, cwv, thinv){ let best=0,bd=Infinity; for(let w=0;w<WEEKS;w++){ const d=Math.abs(weekBlockX(w,cwv,thinv)-x); if(d<bd){bd=d;best=w;} } return best; }
+// center pixel of a whole month block (used by left/right month navigation in Compact)
+function monthCenterX(i, cwv, thinv){ const mo=months[i], tb=tracksBefore(mo.base); return blockXFor(tb.c, tb.t, cwv, thinv) + (mo.weeks*cwv + (mo.weeks-1)*GAP)/2; }
+function nearestMonthToX(x, cwv, thinv){ let best=0,bd=Infinity; for(let i=0;i<months.length;i++){ const d=Math.abs(monthCenterX(i,cwv,thinv)-x); if(d<bd){bd=d;best=i;} } return best; }
+// center pixel of day-column k (used by left/right week navigation in Detail; indexes real columns,
+// so partial month-edge columns are reachable)
+function colCenterX(k, cwv, thinv){ const tb=tracksBefore(cellTracks[k]); return blockXFor(tb.c, tb.t, cwv, thinv) + cwv/2; }
+function nearestColToX(x, cwv, thinv){ let best=0,bd=Infinity; for(let k=0;k<cellTracks.length;k++){ const d=Math.abs(colCenterX(k,cwv,thinv)-x); if(d<bd){bd=d;best=k;} } return best; }
+// continuous pixel<->track-position mapping in block mode. The pitch is non-uniform (thin gaps
+// between months), so a naive cx*newCw/oldCw drifts — and it changes again when the thin gap goes
+// from ½ (Compact) to ¼ (Detail). These keep the exact same content point under the cursor.
+function trackWidth(i, cwv, thinv){ return (blockTracks[i]==='gapthin'?thinv*cwv:cwv); }
+function xToTrackPos(x, cwv, thinv){
+  let acc=0;
+  for(let i=0;i<blockTracks.length;i++){ const w=trackWidth(i,cwv,thinv)+GAP; if(x<acc+w) return i+Math.max(0,Math.min(1,(x-acc)/w)); acc+=w; }
+  return blockTracks.length;
+}
+function trackPosToX(p, cwv, thinv){
+  const i=Math.min(Math.floor(p), Math.max(0,blockTracks.length-1)), frac=p-i;
+  let acc=0; for(let j=0;j<i;j++) acc+=trackWidth(j,cwv,thinv)+GAP;
+  return acc+frac*(trackWidth(i,cwv,thinv)+GAP);
+}
+function relayoutMonths(){
+  const pitch=cw+GAP;
+  for(const el of monthEls){
+    el.style.left=(blocksMode ? blockXFor(+el.dataset.cb, +el.dataset.tb, cw, thinFactor) : (+el.dataset.cont)*pitch)+'px';
+  }
+}
+function setMode(toBlocks){
+  for(const c of grid.children){ c.style.gridColumn = toBlocks ? c.dataset.colBlock : c.dataset.colCont; }
+  grid.style.gridTemplateColumns = toBlocks ? blockTemplate() : '';
+  blocksMode=toBlocks;
+}
+function applyZoom(){
+  const m=metrics();
+  ch = Math.min(cw, m.maxCh);   // never taller than wide
+  document.documentElement.style.setProperty('--cw',cw+'px');
+  document.documentElement.style.setProperty('--ch',ch+'px');
+  const n=stageNum(cw,m);
+  stage.className='stage '+STAGE_META[n].cls+(cw>m.maxCh?' wide':'');
+  zlabel.innerHTML='Level '+n+' · '+STAGE_META[n].name+' &nbsp;<small>'+Math.round(cw)+'px</small>';
+  thinFactor = (n===5)?0.25:0.5;                       // thin month-gap: ¼ cell in detail, ½ in compact
+  if(n>=4) grid.style.setProperty('--thingap','calc(var(--cw) * '+thinFactor+')');
+  relayoutMonths();
+}
+function setZoom(next, focalX){
+  const oldCw=cw, oldMode=blocksMode, oldThin=thinFactor;
+  const cx=scroller.scrollLeft+focalX;
+  const m=metrics();
+  cw=Math.max(7, Math.min(m.maxCw, next));
+  const newMode = stageNum(cw,m)>=4;
+  applyZoom();
+  if(newMode!==oldMode){
+    // re-anchor on the focal week so the view doesn't jump when the layout changes
+    const focalWeek = oldMode ? nearestWeekToX(cx, oldCw, oldThin) : Math.round(cx/(oldCw+GAP));
+    setMode(newMode);
+    relayoutMonths();
+    const nx = newMode ? weekBlockX(focalWeek, cw, thinFactor) : focalWeek*(cw+GAP);
+    scroller.scrollLeft = nx + cw/2 - focalX;
+  } else if(blocksMode){
+    // same (block) mode, but cw and/or the thin-gap width may have changed (Compact <-> Detail)
+    scroller.scrollLeft = trackPosToX(xToTrackPos(cx, oldCw, oldThin), cw, thinFactor) - focalX;
+  } else {
+    scroller.scrollLeft = (cx/(oldCw+GAP))*(cw+GAP) - focalX;
+  }
+}
+scroller.addEventListener('wheel',(e)=>{
+  if(e.shiftKey) return;
+  e.preventDefault();
+  const focalX=e.clientX-scroller.getBoundingClientRect().left;
+  setZoom(cw*(e.deltaY<0?1.15:1/1.15), focalX);
+},{passive:false});
+// ----- one arrow / button press = exactly one zoom level, smoothly animated -----
+let anim=null;
+function animateZoom(target, focalX){
+  cancelAnimationFrame(anim);
+  target=Math.max(7, Math.min(metrics().maxCw, target));
+  const startCw=cw, t0=performance.now(), dur=320;
+  function step(now){
+    const k=Math.min(1,(now-t0)/dur);
+    const e=k<0.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2;   // easeInOutQuad
+    setZoom(startCw+(target-startCw)*e, focalX);
+    if(k<1) anim=requestAnimationFrame(step);
+  }
+  anim=requestAnimationFrame(step);
+}
+function stepLevel(dir){
+  const m=metrics();
+  const ni=Math.max(0, Math.min(STAGE_META.length-1, stageNum(cw,m)+dir));
+  animateZoom(levelTargetCw(ni,m), scroller.clientWidth/2);
+}
+function panBy(dir){
+  const m=metrics(), n=stageNum(cw,m), half=scroller.clientWidth/2, centerX=scroller.scrollLeft+half;
+  let left;
+  if(n===5){           // Detail: step one day-column, snap it to center
+    const k=Math.max(0, Math.min(cellTracks.length-1, nearestColToX(centerX, cw, thinFactor)+dir));
+    left=colCenterX(k, cw, thinFactor)-half;
+  } else if(n===4){    // Compact: step one month, snap its block to center
+    const i=Math.max(0, Math.min(months.length-1, nearestMonthToX(centerX, cw, thinFactor)+dir));
+    left=monthCenterX(i, cw, thinFactor)-half;
+  } else {             // heatmap levels: plain pan by ~one screen
+    left=scroller.scrollLeft + dir*scroller.clientWidth*0.85;
+  }
+  scroller.scrollTo({left, behavior:'smooth'});
+}
+document.addEventListener('keydown',(e)=>{
+  if(e.key==='ArrowUp'||e.key==='ArrowDown'){ e.preventDefault(); stepLevel(e.key==='ArrowUp'?1:-1); }
+  else if(e.key==='ArrowLeft'||e.key==='ArrowRight'){ e.preventDefault(); panBy(e.key==='ArrowRight'?1:-1); }
+});
+window.addEventListener('resize',()=>applyZoom());
+document.getElementById('zin').onclick=()=>stepLevel(1);
+document.getElementById('zout').onclick=()=>stepLevel(-1);
+
+applyZoom();
+requestAnimationFrame(()=>{ scroller.scrollLeft=scroller.scrollWidth; });
+</script>
+</body>
+</html>

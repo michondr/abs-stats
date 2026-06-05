@@ -1,0 +1,21 @@
+services:
+  abs-stats:
+    build: .
+    image: abs-stats:latest
+    container_name: abs-stats
+    restart: unless-stopped
+    volumes:
+      # serve the folder live from disk — edit public/index.html + reload the browser, no rebuild needed.
+      # (mounting the directory, not the single file, so file rewrites are picked up correctly)
+      - ./public:/usr/share/nginx/html:ro
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.abs-stats.rule=Host(`abs-stats.michondr.space`)"
+      - "traefik.http.routers.abs-stats.entrypoints=websecure"
+      - "traefik.http.routers.abs-stats.tls.certresolver=myvercelresolver"
+
+networks:
+  proxy:
+    external: true
