@@ -92,6 +92,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
 		os.Exit(runHealthcheck())
 	}
+	// -gendemo <outdir>: build the static GitHub Pages demo (Open Library books +
+	// synthetic listening history) into <outdir> and exit. Needs no ABS server or DB.
+	if len(os.Args) > 2 && os.Args[1] == "-gendemo" {
+		os.Exit(runGenDemo(os.Args[2]))
+	}
 
 	cfg := loadConfig()
 	if cfg.absURL == "" || cfg.absTok == "" {

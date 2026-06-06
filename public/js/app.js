@@ -8,6 +8,12 @@ import { initControls } from './controls.js';
 cacheDom();
 if(isPhone) document.body.classList.add('phone');
 
+// Data source is overridable so the same frontend serves both the live app and the
+// static GitHub Pages demo. Defaults match the live Go server; the demo build injects
+// window.__STATUS_URL=null (skip the sync poll) and window.__DATA_URL='data.json'.
+const STATUS_URL = ('__STATUS_URL' in window) ? window.__STATUS_URL : '/api/status';
+const DATA_URL   = window.__DATA_URL || '/api/data';
+
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function setLoader(msg, sub, isErr){ D.lmsg.textContent=msg||''; D.lsub.textContent=sub||''; D.loader.classList.toggle('err',!!isErr); }
 function hideLoader(){ D.loader.classList.add('hidden'); }
@@ -15,15 +21,17 @@ async function getJSON(u){ const r=await fetch(u,{cache:'no-store'}); if(!r.ok) 
 
 async function init(){
   try{
-    let st=await getJSON('/api/status');
-    while(!st.ready){
-      if(st.error) setLoader('Sync error', st.error, true);
-      else setLoader(st.message||'Syncing with Audiobookshelf…', st.sessionsFetched?(st.sessionsFetched+' sessions'):'');
-      await sleep(1500);
-      st=await getJSON('/api/status');
+    if(STATUS_URL){
+      let st=await getJSON(STATUS_URL);
+      while(!st.ready){
+        if(st.error) setLoader('Sync error', st.error, true);
+        else setLoader(st.message||'Syncing with Audiobookshelf…', st.sessionsFetched?(st.sessionsFetched+' sessions'):'');
+        await sleep(1500);
+        st=await getJSON(STATUS_URL);
+      }
     }
     setLoader('Building heatmap…','');
-    const data=await getJSON('/api/data');
+    const data=await getJSON(DATA_URL);
     build(data);
     buildMonthly();          // Level-0 view is cheap; build once up front
     initControls();
