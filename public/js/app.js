@@ -2,7 +2,7 @@
 import { S, D, isPhone, cacheDom } from './state.js';
 import { build } from './render.js';
 import { buildMonthly } from './monthly.js';
-import { applyZoom } from './zoom.js';
+import { applyZoom, scrollTodayToCenter } from './zoom.js';
 import { initControls } from './controls.js';
 
 cacheDom();
@@ -37,7 +37,7 @@ async function init(){
     initControls();
     applyZoom();
     hideLoader();
-    requestAnimationFrame(()=>{ D.scroller.scrollLeft=D.scroller.scrollWidth; });   // start at "today"
+    requestAnimationFrame(scrollTodayToCenter);   // center today so zoom-in anchors on it
   }catch(e){
     setLoader('Failed to load', String(e && e.message || e), true);
   }

@@ -172,6 +172,17 @@ export function jumpToMonthCovers(y, mo){
   }
 }
 
+function todayViewportX(){
+  const todayWeek=Math.max(0, Math.min(S.WEEKS-1, Math.floor((S.today-S.start)/(7*864e5))));
+  let contentX;
+  if(S.blocksMode){
+    contentX=weekBlockX(todayWeek, S.cw, S.thinFactor)+S.cw/2;
+  } else {
+    contentX=todayWeek*(S.cw+GAP)+monthOfWeek(todayWeek)*S.monthShift+S.cw/2;
+  }
+  return contentX - D.scroller.scrollLeft + S.padX;
+}
+
 export function stepLevel(dir){
   const m=metrics();
   if(S.monthlyView){ if(dir>0) exitMonthly(); return; }    // zoom in leaves monthly; further out = no-op
@@ -180,7 +191,11 @@ export function stepLevel(dir){
   let ni=cur+dir;
   if(isPhone && ni===3) ni+=dir;                           // phone skips Compact
   ni=Math.max(0, Math.min(STAGE_META.length-1, ni));
-  animateZoom(levelTargetCw(ni,m), D.scroller.clientWidth/2);
+  // When zooming in, anchor on today if it's visible; otherwise fall back to viewport centre.
+  const half=D.scroller.clientWidth/2;
+  const vx=dir>0 ? todayViewportX() : half;
+  const focalX=(dir>0 && vx>=0 && vx<=D.scroller.clientWidth) ? vx : half;
+  animateZoom(levelTargetCw(ni,m), focalX);
 }
 
 // step one "set" left/right and snap it to centre (desktop arrows + phone discrete swipe)
@@ -232,6 +247,19 @@ export function jumpToNow(){
   const todayWeek=Math.max(0, Math.min(S.WEEKS-1, Math.floor((S.today-S.start)/(7*864e5))));
   const half=D.scroller.clientWidth/2;
   D.scroller.scrollLeft=weekBlockX(todayWeek, S.cw, S.thinFactor)+S.cw/2-half+S.padX;
+}
+
+// Center today's week in the viewport at the current zoom level (called once on init).
+export function scrollTodayToCenter(){
+  const todayWeek=Math.max(0, Math.min(S.WEEKS-1, Math.floor((S.today-S.start)/(7*864e5))));
+  const half=D.scroller.clientWidth/2;
+  let x;
+  if(S.blocksMode){
+    x=weekBlockX(todayWeek, S.cw, S.thinFactor)+S.cw/2;
+  } else {
+    x=todayWeek*(S.cw+GAP)+monthOfWeek(todayWeek)*S.monthShift+S.cw/2;
+  }
+  D.scroller.scrollLeft=x-half+S.padX;
 }
 
 export { stageNum };
