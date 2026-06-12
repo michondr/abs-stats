@@ -341,6 +341,7 @@ func writeDemoIndex(srcPath, dstPath string) error {
 	html := string(b)
 	html = strings.ReplaceAll(html, `href="/favicon.svg"`, `href="favicon.svg"`)
 	html = strings.ReplaceAll(html, `href="/style.css"`, `href="style.css"`)
+	html = strings.ReplaceAll(html, `href="/manifest.json"`, `href="manifest.json"`)
 	html = strings.ReplaceAll(html, `src="/js/app.js"`, `src="js/app.js"`)
 	const cfg = "<script>window.__STATUS_URL=null;window.__DATA_URL=\"data.json\";</script>\n"
 	html = strings.Replace(html, `<script type="module"`, cfg+`<script type="module"`, 1)
