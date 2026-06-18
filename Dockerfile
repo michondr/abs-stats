@@ -16,6 +16,8 @@ ENV PORT=8080 DATA_DIR=/data WEB_DIR=/app/public
 EXPOSE 8080
 VOLUME ["/data"]
 # Distroless has no shell/curl, so the binary probes itself (-healthcheck -> GET /healthz).
-HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 \
+# Steady-state probe is every 2m; during the start period it probes every 2s (~10 checks
+# over the first 20s) so an unhealthy startup is caught quickly.
+HEALTHCHECK --interval=2m --start-interval=2s --start-period=20s --timeout=5s --retries=5 \
   CMD ["/app/abs-stats", "-healthcheck"]
 ENTRYPOINT ["/app/abs-stats"]
